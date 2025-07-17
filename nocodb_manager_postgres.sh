@@ -24,12 +24,18 @@ check_dependencies() {
         log "[✅] Docker da co san"
     fi
 
-    if ! command -v docker compose &> /dev/null; then
-        log "[❌] Docker Compose chua co. Cai dat ngay..."
-        apt install -y docker-compose || { log "[💥] Loi cai dat Docker Compose!"; exit 1; }
-        log "[✅] Docker Compose da duoc cai dat"
+    if ! docker compose version &> /dev/null; then
+        if ! docker-compose version &> /dev/null; then
+            log "[❌] Docker Compose chua co. Cai dat ngay..."
+            apt install -y docker-compose || { log "[💥] Loi cai dat Docker Compose!"; exit 1; }
+            log "[✅] Docker Compose da duoc cai dat"
+        else
+            COMPOSE_CMD="docker-compose"
+            log "[ℹ️] Su dung docker-compose"
+        fi
     else
-        log "[✅] Docker Compose da co san"
+        COMPOSE_CMD="docker compose"
+        log "[ℹ️] Su dung docker compose"
     fi
 }
 
@@ -64,8 +70,12 @@ services:
     restart: unless-stopped
 EOF
 
-    log "[⬆️] Khoi dong Docker Compose"
-    docker compose up -d || { log "[💥] Loi khi khoi dong Docker Compose!"; exit 1; }
+    log "[⬆️] Khoi dong Docker Compose..."
+    $COMPOSE_CMD up -d 2>&1 | tee -a $LOG_FILE
+    if [ $? -ne 0 ]; then
+        log "[💥] Loi khi khoi dong Docker Compose! Xem log tai $LOG_FILE"
+        exit 1
+    fi
 
     log "[⏳] Cho PostgreSQL khoi dong (20s)..."
     sleep 20
