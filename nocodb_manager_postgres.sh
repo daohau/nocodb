@@ -4,12 +4,10 @@ echo "============================================"
 echo "     🚀 NocoDB Manager - PostgreSQL Edition"
 echo "============================================"
 
-# Thư mục cài đặt
 INSTALL_DIR="/opt/nocodb"
 DOMAIN_NAME=""
 EMAIL=""
 
-# Hàm kiểm tra Docker & Docker Compose
 check_dependencies() {
     echo "[🔍] Kiem tra Docker va Docker Compose..."
     if ! command -v docker &> /dev/null; then
@@ -18,17 +16,15 @@ check_dependencies() {
         systemctl enable --now docker
     fi
 
-    if ! command -v docker-compose &> /dev/null; then
+    if ! command -v docker compose &> /dev/null; then
         echo "[❌] Docker Compose chua duoc cai dat. Cai dat ngay..."
         apt install -y docker-compose
     fi
 }
 
-# Hàm cài NocoDB + PostgreSQL
 install_nocodb() {
     mkdir -p $INSTALL_DIR && cd $INSTALL_DIR
 
-    # Tạo docker-compose.yml
     cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
@@ -45,38 +41,41 @@ services:
 
   nocodb:
     image: nocodb/nocodb:latest
-    container_name: nocodb_nocodb
-    depends_on:
-      - postgres
     environment:
       NC_DB: "pg://nocodb:nocodb123@postgres:5432/nocodb_db"
+    depends_on:
+      - postgres
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
 EOF
 
-    # Khởi động stack
     docker compose up -d
 
     echo "[⏳] Cho PostgreSQL khoi dong..."
     sleep 20
 
-    # Kiểm tra NocoDB
+    echo "[🔍] Kiem tra container NocoDB..."
+    NOCODB_CONTAINER=$(docker ps -a --filter "ancestor=nocodb/nocodb:latest" --format "{{.Names}}" | head -n1)
+
+    if [ -z "$NOCODB_CONTAINER" ]; then
+        echo "[❌] Khong tim thay container NocoDB"
+        exit 1
+    fi
+
     if curl -s http://127.0.0.1:8080 &> /dev/null; then
         echo "[✅] NocoDB dang chay tren port 8080"
     else
         echo "[❌] NocoDB khong chay. Kiem tra log..."
-        docker logs -f nocodb_nocodb
+        docker logs -f $NOCODB_CONTAINER
         exit 1
     fi
 }
 
-# Hàm cài Nginx + SSL
 setup_nginx_ssl() {
     echo "[🌐] Cai dat Nginx va SSL cho $DOMAIN_NAME"
     apt install -y nginx certbot python3-certbot-nginx
 
-    # Tạo cấu hình Nginx
     cat > /etc/nginx/sites-available/$DOMAIN_NAME <<EOF
 server {
     listen 80;
@@ -96,13 +95,11 @@ EOF
     ln -s /etc/nginx/sites-available/$DOMAIN_NAME /etc/nginx/sites-enabled/
     nginx -t && systemctl reload nginx
 
-    # Cài SSL với Certbot
     certbot --nginx -d $DOMAIN_NAME --email $EMAIL --agree-tos --non-interactive
     systemctl reload nginx
     echo "[🔒] Da cai SSL va cai dat tu dong gia han"
 }
 
-# Menu chính
 main_menu() {
     echo ""
     echo "1. Cai dat NocoDB + PostgreSQL"
@@ -119,25 +116,3 @@ main_menu() {
             ;;
         2)
             read -p "Nhap domain (VD: modaviet.pro.vn): " DOMAIN_NAME
-            read -p "Nhap email de nhan thong bao SSL: " EMAIL
-            setup_nginx_ssl
-            ;;
-        3)
-            echo "[🔄] Khoi dong lai NocoDB..."
-            cd $INSTALL_DIR
-            docker compose restart
-            ;;
-        4)
-            docker logs -f nocodb_nocodb
-            ;;
-        5)
-            exit 0
-            ;;
-        *)
-            echo "Lua chon khong hop le!"
-            ;;
-    esac
-    main_menu
-}
-
-main_menu
