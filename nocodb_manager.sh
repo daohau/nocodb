@@ -2,20 +2,31 @@
 
 clear
 echo "============================================"
-echo " NOCODB ALL-IN-ONE INSTALLER & MANAGER "
+echo " NOCODB + POSTGRESQL ALL-IN-ONE MANAGER "
 echo "============================================"
 
 INSTALL_DIR="/opt/nocodb"
 DOMAIN_FILE="$INSTALL_DIR/domain.conf"
+DB_FILE="$INSTALL_DIR/db.conf"
+
+# ==== Ham tao mat khau ngau nhien ====
+gen_pass() {
+    tr -dc A-Za-z0-9 </dev/urandom | head -c 16
+}
 
 # ==== Ham cai dat ====
-install_nocodb() {
+install_nocodb_postgres() {
     read -p "Nhap ten mien (vi du: modaviet.pro.vn): " DOMAIN
     read -p "Nhap email cho SSL (vi du: admin@$DOMAIN): " EMAIL
 
     echo "$DOMAIN" > $DOMAIN_FILE
 
-    echo "[1/6] Cai dat Docker & Docker Compose..."
+    POSTGRES_USER="nocodb"
+    POSTGRES_DB="nocodb_db"
+    POSTGRES_PASSWORD=$(gen_pass)
+    echo "$POSTGRES_USER|$POSTGRES_DB|$POSTGRES_PASSWORD" > $DB_FILE
+
+    echo "[1/7] Cai dat Docker & Docker Compose..."
     apt update -y
     apt install -y apt-transport-https ca-certificates curl software-properties-common
     curl -fsSL https://get.docker.com | bash
@@ -23,31 +34,52 @@ install_nocodb() {
     systemctl enable docker
     systemctl start docker
 
-    echo "[2/6] Tao thu muc NocoDB..."
+    echo "[2/7] Tao thu muc NocoDB..."
     mkdir -p $INSTALL_DIR
     cd $INSTALL_DIR
 
-    echo "[3/6] Tao file docker-compose.yml..."
+    echo "[3/7] Tao file docker-compose.yml..."
     cat > docker-compose.yml <<EOF
 version: "3"
 services:
+  postgres:
+    image: postgres:15
+    container_name: nocodb_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: $POSTGRES_USER
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+      POSTGRES_DB: $POSTGRES_DB
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      - nocodb_net
+
   nocodb:
     image: nocodb/nocodb:latest
-    container_name: nocodb_nocodb_1
+    container_name: nocodb_nocodb
     restart: always
+    environment:
+      NC_DB: "pg://$POSTGRES_USER:$POSTGRES_PASSWORD@postgres:5432/$POSTGRES_DB"
+      NC_PUBLIC_URL: "https://$DOMAIN"
+    depends_on:
+      - postgres
     ports:
       - "8080:8080"
-    environment:
-      NC_PUBLIC_URL: "https://$DOMAIN"
     volumes:
       - ./data:/usr/app/data
+    networks:
+      - nocodb_net
+
+networks:
+  nocodb_net:
 EOF
 
-    echo "[4/6] Khoi dong NocoDB..."
+    echo "[4/7] Khoi dong NocoDB + PostgreSQL..."
     docker compose down
     docker compose up -d
 
-    echo "[5/6] Cai Nginx & SSL..."
+    echo "[5/7] Cai Nginx & SSL..."
     apt install -y nginx certbot python3-certbot-nginx
     cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server {
@@ -71,57 +103,61 @@ EOF
     echo "Dang cai SSL cho $DOMAIN..."
     certbot --nginx --non-interactive --agree-tos --redirect -m $EMAIL -d $DOMAIN
 
-    echo "[6/6] Cai tu dong gia han SSL..."
+    echo "[6/7] Cai tu dong gia han SSL..."
     (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet && systemctl reload nginx") | crontab -
 
+    echo "[7/7] Hoan tat!"
     echo "============================================"
-    echo " Cai dat hoan tat! Truy cap: https://$DOMAIN "
+    echo " Truy cap: https://$DOMAIN "
+    echo " PostgreSQL:"
+    echo "   User: $POSTGRES_USER"
+    echo "   Password: $POSTGRES_PASSWORD"
     echo "============================================"
 }
 
 # ==== Menu quan ly ====
 manage_nocodb() {
     DOMAIN=$(cat $DOMAIN_FILE 2>/dev/null)
+    IFS="|" read POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD < $DB_FILE
 
     while true; do
         echo ""
         echo "============ MENU QUAN LY NOCODB ============"
-        echo "1. Start NocoDB"
-        echo "2. Stop NocoDB"
-        echo "3. Restart NocoDB"
+        echo "1. Start NocoDB + PostgreSQL"
+        echo "2. Stop NocoDB + PostgreSQL"
+        echo "3. Restart NocoDB + PostgreSQL"
         echo "4. Update NocoDB"
         echo "5. Xem log NocoDB"
-        echo "6. Backup data"
+        echo "6. Backup PostgreSQL"
         echo "7. Exit"
         echo "============================================"
         read -p "Chon tuy chon [1-7]: " choice
 
         case $choice in
             1)
-                echo "Starting NocoDB..."
+                echo "Starting..."
                 cd $INSTALL_DIR && docker compose up -d
                 ;;
             2)
-                echo "Stopping NocoDB..."
+                echo "Stopping..."
                 cd $INSTALL_DIR && docker compose down
                 ;;
             3)
-                echo "Restarting NocoDB..."
+                echo "Restarting..."
                 cd $INSTALL_DIR && docker compose down && docker compose up -d
                 ;;
             4)
-                echo "Updating NocoDB..."
+                echo "Updating..."
                 cd $INSTALL_DIR && docker compose pull && docker compose down && docker compose up -d
                 ;;
             5)
                 echo "Xem log NocoDB..."
-                docker logs -f nocodb_nocodb_1
+                docker logs -f nocodb_nocodb
                 ;;
             6)
-                BACKUP_DIR="$INSTALL_DIR/backup_$(date +%Y%m%d_%H%M%S)"
-                echo "Backup data to $BACKUP_DIR..."
-                mkdir -p $BACKUP_DIR
-                cp -r $INSTALL_DIR/data $BACKUP_DIR/
+                BACKUP_FILE="$INSTALL_DIR/postgres_backup_$(date +%Y%m%d_%H%M%S).sql"
+                echo "Backing up PostgreSQL to $BACKUP_FILE..."
+                docker exec nocodb_postgres pg_dump -U $POSTGRES_USER $POSTGRES_DB > $BACKUP_FILE
                 echo "Backup hoan tat!"
                 ;;
             7)
@@ -139,6 +175,6 @@ manage_nocodb() {
 if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
     manage_nocodb
 else
-    install_nocodb
+    install_nocodb_postgres
     manage_nocodb
 fi
