@@ -5,26 +5,39 @@ echo "     🚀 NocoDB Manager - PostgreSQL Edition"
 echo "============================================"
 
 INSTALL_DIR="/opt/nocodb"
+LOG_FILE="$INSTALL_DIR/install.log"
 DOMAIN_NAME=""
 EMAIL=""
 
+log() {
+    echo "[`date +"%Y-%m-%d %H:%M:%S"`] $1" | tee -a $LOG_FILE
+}
+
 check_dependencies() {
-    echo "[🔍] Kiem tra Docker va Docker Compose..."
+    log "[🔍] Kiem tra Docker va Docker Compose..."
     if ! command -v docker &> /dev/null; then
-        echo "[❌] Docker chua duoc cai dat. Cai dat ngay..."
-        apt update && apt install -y docker.io
+        log "[❌] Docker chua duoc cai dat. Cai dat ngay..."
+        apt update && apt install -y docker.io || { log "[💥] Loi cai dat Docker!"; exit 1; }
         systemctl enable --now docker
+        log "[✅] Docker da duoc cai dat"
+    else
+        log "[✅] Docker da co san"
     fi
 
     if ! command -v docker compose &> /dev/null; then
-        echo "[❌] Docker Compose chua duoc cai dat. Cai dat ngay..."
-        apt install -y docker-compose
+        log "[❌] Docker Compose chua co. Cai dat ngay..."
+        apt install -y docker-compose || { log "[💥] Loi cai dat Docker Compose!"; exit 1; }
+        log "[✅] Docker Compose da duoc cai dat"
+    else
+        log "[✅] Docker Compose da co san"
     fi
 }
 
 install_nocodb() {
+    log "[📁] Tao thu muc $INSTALL_DIR va di chuyen vao"
     mkdir -p $INSTALL_DIR && cd $INSTALL_DIR
 
+    log "[📝] Tao file docker-compose.yml"
     cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
@@ -51,24 +64,34 @@ services:
     restart: unless-stopped
 EOF
 
-    docker compose up -d
+    log "[⬆️] Khoi dong Docker Compose"
+    docker compose up -d || { log "[💥] Loi khi khoi dong Docker Compose!"; exit 1; }
 
-    echo "[⏳] Cho PostgreSQL khoi dong..."
+    log "[⏳] Cho PostgreSQL khoi dong (20s)..."
     sleep 20
 
-    echo "[🔍] Kiem tra container NocoDB..."
-    if docker ps -q -f name=nocodb_app &> /dev/null; then
-        echo "[✅] NocoDB dang chay tren port 8080"
+    log "[🔍] Kiem tra trang thai container PostgreSQL"
+    if docker ps -q -f name=nocodb_postgres &> /dev/null; then
+        log "[✅] PostgreSQL dang chay"
     else
-        echo "[❌] NocoDB khong chay. Kiem tra log..."
-        docker logs -f nocodb_app
+        log "[💥] PostgreSQL khong chay!"
+        docker logs nocodb_postgres | tee -a $LOG_FILE
+        exit 1
+    fi
+
+    log "[🔍] Kiem tra trang thai container NocoDB"
+    if docker ps -q -f name=nocodb_app &> /dev/null; then
+        log "[✅] NocoDB dang chay tren port 8080"
+    else
+        log "[💥] NocoDB khong chay!"
+        docker logs nocodb_app | tee -a $LOG_FILE
         exit 1
     fi
 }
 
 setup_nginx_ssl() {
-    echo "[🌐] Cai dat Nginx va SSL cho $DOMAIN_NAME"
-    apt install -y nginx certbot python3-certbot-nginx
+    log "[🌐] Cai dat Nginx va SSL cho $DOMAIN_NAME"
+    apt install -y nginx certbot python3-certbot-nginx || { log "[💥] Loi cai dat Nginx/Certbot!"; exit 1; }
 
     cat > /etc/nginx/sites-available/$DOMAIN_NAME <<EOF
 server {
@@ -89,9 +112,10 @@ EOF
     ln -s /etc/nginx/sites-available/$DOMAIN_NAME /etc/nginx/sites-enabled/
     nginx -t && systemctl reload nginx
 
-    certbot --nginx -d $DOMAIN_NAME --email $EMAIL --agree-tos --non-interactive
+    log "[🔒] Cai dat SSL voi Certbot"
+    certbot --nginx -d $DOMAIN_NAME --email $EMAIL --agree-tos --non-interactive || { log "[💥] Loi khi cai SSL!"; exit 1; }
     systemctl reload nginx
-    echo "[🔒] Da cai SSL va cai dat tu dong gia han"
+    log "[✅] Da cai SSL va cai dat tu dong gia han"
 }
 
 main_menu() {
@@ -114,13 +138,14 @@ main_menu() {
             setup_nginx_ssl
             ;;
         3)
-            echo "[🔄] Khoi dong lai NocoDB..."
-            docker restart nocodb_app
+            log "[🔄] Khoi dong lai NocoDB..."
+            docker restart nocodb_app || { log "[💥] Loi khi khoi dong lai NocoDB!"; exit 1; }
             ;;
         4)
             docker logs -f nocodb_app
             ;;
         5)
+            log "[👋] Thoat..."
             exit 0
             ;;
         *)
@@ -130,4 +155,5 @@ main_menu() {
     main_menu
 }
 
+log "[🚀] Bat dau chay script"
 main_menu
