@@ -41,6 +41,7 @@ services:
 
   nocodb:
     image: nocodb/nocodb:latest
+    container_name: nocodb_app
     environment:
       NC_DB: "pg://nocodb:nocodb123@postgres:5432/nocodb_db"
     depends_on:
@@ -56,18 +57,11 @@ EOF
     sleep 20
 
     echo "[🔍] Kiem tra container NocoDB..."
-    NOCODB_CONTAINER=$(docker ps -a --filter "ancestor=nocodb/nocodb:latest" --format "{{.Names}}" | head -n1)
-
-    if [ -z "$NOCODB_CONTAINER" ]; then
-        echo "[❌] Khong tim thay container NocoDB"
-        exit 1
-    fi
-
-    if curl -s http://127.0.0.1:8080 &> /dev/null; then
+    if docker ps -q -f name=nocodb_app &> /dev/null; then
         echo "[✅] NocoDB dang chay tren port 8080"
     else
         echo "[❌] NocoDB khong chay. Kiem tra log..."
-        docker logs -f $NOCODB_CONTAINER
+        docker logs -f nocodb_app
         exit 1
     fi
 }
@@ -116,3 +110,24 @@ main_menu() {
             ;;
         2)
             read -p "Nhap domain (VD: modaviet.pro.vn): " DOMAIN_NAME
+            read -p "Nhap email de nhan thong bao SSL: " EMAIL
+            setup_nginx_ssl
+            ;;
+        3)
+            echo "[🔄] Khoi dong lai NocoDB..."
+            docker restart nocodb_app
+            ;;
+        4)
+            docker logs -f nocodb_app
+            ;;
+        5)
+            exit 0
+            ;;
+        *)
+            echo "Lua chon khong hop le!"
+            ;;
+    esac
+    main_menu
+}
+
+main_menu
